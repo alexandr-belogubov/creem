@@ -11,8 +11,8 @@ import NativeAffiliateProgram from "/snippets/native-affiliate-program.mdx";
 ## Overview
 
 [Refgrow](https://refgrow.com/?utm_source=creem&utm_medium=docs) is affiliate and referral software
-for SaaS. Your partners get a portal you can embed inside your product, and every sale they bring is
-credited from your Creem store.
+for SaaS. A partner shares a link or a discount code, and when that visitor buys through your Creem
+checkout, Refgrow credits the sale to the partner.
 
 You connect with one API key. Refgrow uses it to add its own webhook to your Creem store and read the
 signing secret, so you don't copy a URL or paste a secret. Sales, subscription renewals, refunds and
@@ -80,11 +80,6 @@ and grant only the scopes Refgrow uses:
 
 With these scopes the key can't change your products, customers or orders.
 
-<Tip>
-  Creem announces a renewal without its amount. Without `transactions:read`, Refgrow credits
-  renewals on the product price instead of the amount actually charged.
-</Tip>
-
 </Step>
 
 <Step title="Connect Creem in Refgrow">
@@ -129,6 +124,10 @@ every `creem.io` payment link:
 If your payment links use a [custom domain](/features/custom-domains), add the class
 `refgrow-creem-link` to those links so the script picks them up too.
 
+The script adds the code when a link is clicked, not to a URL your code opens with `window.open` or
+`window.location`. Add `metadata[referral_code]` to those URLs yourself, with the value of
+`window.Refgrow.getReferralCode()`.
+
 </Step>
 
 <Step title="Pass the code from your server (optional)">
@@ -136,17 +135,27 @@ If your payment links use a [custom domain](/features/custom-domains), add the c
 If your server creates checkout sessions, read the code in the browser and send it with your checkout
 request:
 
-```typescript
-// Browser
-const referralCode = window.Refgrow?.getReferralCode?.() || null;
-await fetch("/api/checkout", { method: "POST", body: JSON.stringify({ referralCode }) });
+<CodeGroup>
 
-// Server (Creem TypeScript SDK)
-const checkout = await creem.checkouts.create({
-  productId: "prod_xxxxx",
-  metadata: { referral_code: referralCode },
+```ts Browser
+const referralCode = window.Refgrow?.getReferralCode?.() ?? null;
+await fetch("/api/checkout", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ referralCode }),
 });
 ```
+
+```ts Server (TypeScript SDK)
+const { referralCode } = await request.json();
+const checkout = await creem.checkouts.create({
+  productId: "prod_xxxxx",
+  ...(referralCode && { metadata: { referral_code: referralCode } }),
+});
+// send the customer to checkout.checkoutUrl
+```
+
+</CodeGroup>
 
 </Step>
 
@@ -154,9 +163,12 @@ const checkout = await creem.checkouts.create({
 
 Create a key in Creem's **Test Mode** (it starts with `creem_test_`) and connect it to a separate
 Refgrow project, so test sales stay out of your real program. Open your site with
-`?ref=PARTNER_CODE`, click a payment link and pay with Creem's test card. The sale appears under the
-partner within seconds, and Refgrow's **Integration** page lists every webhook it received and what it
-did with it.
+`?ref=PARTNER_CODE`, click a payment link and pay with a [test card](/getting-started/test-mode). The
+sale appears under the partner, and Refgrow's **Integration** page lists every webhook it received
+and what it did with it. Then refund the payment in Creem and check that the commission is reversed.
+
+Use a real test payment rather than **Send test event** in Creem. Test events carry no metadata, so
+they can't be credited to a partner.
 
 When it works, create a live key the same way and connect it to your real Refgrow project.
 
@@ -170,9 +182,6 @@ A discount code credits a partner without a link, for partners who promote by vo
 the discount in your Creem store, then give the same code to the partner in Refgrow. A sale that uses
 the code is credited to that partner, with or without metadata.
 
-A buyer who signed up through a partner's link is also matched by email, so a sale made later from
-another device still finds its partner.
-
 ## What Gets Tracked
 
 | Event                      | What happens                                                                                      |
@@ -181,8 +190,8 @@ another device still finds its partner.
 | First subscription payment | Commission recorded once, whichever of `checkout.completed` and `subscription.paid` arrives first |
 | Subscription renewal       | Commission from each `subscription.paid`, credited to the same partner                            |
 | Refund                     | Commission reduced in proportion for a partial refund, removed for a full one                     |
-| Chargeback                 | Commission reversed in full                                                                       |
-| Cancellation               | Commission already earned is kept; the subscription simply stops renewing                         |
+| Chargeback                 | Commission reversed in full when the dispute opens                                                |
+| Cancellation               | Commission already earned is kept                                                                 |
 | Discount code              | A sale using a partner's code credits them, even without a link                                   |
 
 Percentage commissions use what the customer paid after discounts, minus the tax Creem collected.
@@ -191,11 +200,16 @@ twice.
 
 ## Good to Know
 
-- **Short links.** The script adds the code to full payment links on your own site. Link to the
-  payment link itself where partners send traffic, rather than a Creem short link, or give those
-  partners a discount code.
-- **Signature failures.** If you delete and re-create the webhook in Creem, its signing secret
-  changes. Connect again in Refgrow, or paste the new secret.
+- **Short links and storefronts.** The script also adds the code to `l.creem.io` short links and
+  [storefront](/features/storefronts) pages, but Creem drops it before checkout. On your site, link
+  to the payment link itself.
+- **Partners who link to Creem directly.** A partner link that skips your site never loads the
+  script, so no code is attached. Give those partners a discount code.
+- **Won disputes.** Creem sends no event when you win a dispute, so Refgrow doesn't restore a
+  commission it reversed on `dispute.created`.
+- **Signature failures.** Each Creem webhook has its own signing secret. If you re-create Refgrow's
+  webhook by hand, or add a second webhook pointing at Refgrow, deliveries signed with the other
+  secret fail. Keep one webhook for Refgrow, then connect again or paste that webhook's secret.
 - **Webhook log.** Refgrow's **Integration** page shows each Creem event it received and what it did
   with it, which is the quickest way to see why a sale was or wasn't credited.
 
